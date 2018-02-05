@@ -51,9 +51,10 @@ type Runner struct {
 	Logger       *log.Logger
 	defaultGroup *lib.Group
 
-	BaseDialer net.Dialer
-	Resolver   *dnscache.Resolver
-	RPSLimit   *rate.Limiter
+	BaseDialer       net.Dialer
+	Resolver         *dnscache.Resolver
+	RPSLimit         *rate.Limiter
+	CollectorOptions lib.CollectorOptions
 }
 
 func New(src *lib.SourceData, fs afero.Fs) (*Runner, error) {
@@ -192,6 +193,10 @@ func (r *Runner) SetOptions(opts lib.Options) {
 	}
 }
 
+func (r *Runner) SetCollectorOptions(opts lib.CollectorOptions) {
+	r.CollectorOptions = opts
+}
+
 type VU struct {
 	BundleInstance
 
@@ -239,16 +244,17 @@ func (u *VU) RunOnce(ctx context.Context) ([]stats.Sample, error) {
 	}
 
 	state := &common.State{
-		Logger:        u.Runner.Logger,
-		Options:       u.Runner.Bundle.Options,
-		Group:         u.Runner.defaultGroup,
-		HTTPTransport: u.HTTPTransport,
-		Dialer:        u.Dialer,
-		CookieJar:     cookieJar,
-		RPSLimit:      u.Runner.RPSLimit,
-		BPool:         u.BPool,
-		Vu:            u.ID,
-		Iteration:     u.Iteration,
+		Logger:           u.Runner.Logger,
+		Options:          u.Runner.Bundle.Options,
+		CollectorOptions: u.Runner.CollectorOptions,
+		Group:            u.Runner.defaultGroup,
+		HTTPTransport:    u.HTTPTransport,
+		Dialer:           u.Dialer,
+		CookieJar:        cookieJar,
+		RPSLimit:         u.Runner.RPSLimit,
+		BPool:            u.BPool,
+		Vu:               u.ID,
+		Iteration:        u.Iteration,
 	}
 	u.Dialer.BytesRead = &state.BytesRead
 	u.Dialer.BytesWritten = &state.BytesWritten
@@ -265,9 +271,17 @@ func (u *VU) RunOnce(ctx context.Context) ([]stats.Sample, error) {
 	_, err = u.Default(goja.Undefined())
 
 	t := time.Now()
-	tags := map[string]string{
-		"vu":   strconv.FormatInt(u.ID, 10),
-		"iter": strconv.FormatInt(iter, 10)}
+
+	// Check collector options, update tags accordingly.
+	tags := map[string]string{}
+	if (state.CollectorOptions.DefaultTags != nil && state.CollectorOptions.DefaultTags["vu:id"]) ||
+		(state.Options.DefaultTags != nil && state.Options.DefaultTags["vu:id"]) {
+		tags["vu"] = strconv.FormatInt(u.ID, 10)
+	}
+	if (state.CollectorOptions.DefaultTags != nil && state.CollectorOptions.DefaultTags["vu:iter"]) ||
+		(state.Options.DefaultTags != nil && state.Options.DefaultTags["vu:iter"]) {
+		tags["iter"] = strconv.FormatInt(iter, 10)
+	}
 
 	samples := append(state.Samples,
 		stats.Sample{Time: t, Metric: metrics.DataSent, Value: float64(state.BytesWritten), Tags: tags},
